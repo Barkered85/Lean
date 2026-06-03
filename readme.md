@@ -3,7 +3,15 @@
 ## Overview
 This repository implements a highly efficient, three-tier agentic development team designed to operate within VS Code GitHub Copilot. The system is built for functional software development — apps, games, and tools — with a hard focus on token efficiency and credit-gated execution. Agents are autonomous but coordinated: each one reads shared state before acting, decides whether it is genuinely needed, and bypasses if not.
 
-To get started, clone the repo, then pick Plan from the GitHub Copilot chat and start planning your project. 
+---
+
+## Getting Started
+
+1. Clone the repo.
+2. Select **Plan** from the VS Code Chat agents dropdown.
+3. Describe your goal in plain language. Plan will scope the work and set the state.
+4. Use the **handoff buttons** at the end of Plan's response to transition to Build or Test.
+5. Follow Plan's **recommended next action** at the close of every cycle — it tells you exactly which agent to invoke next, or whether your input is needed before the team can proceed.
 
 ---
 
@@ -113,11 +121,3 @@ All agents share context exclusively through three files. There is no other shar
 
 When `handover.md` approaches 80 lines, Plan snapshots the current cycle content into `changelog.md` under a dated heading (`## [YYYY-MM-DD HH:MM] — [Sprint summary]`) and resets the file to the clean structure above.
 
----
-
-## Getting Started
-
-1. Select **Plan** from the VS Code Chat agents dropdown.
-2. Describe your goal in plain language. Plan will scope the work and set the state.
-3. Use the **handoff buttons** at the end of Plan's response to transition to Build or Test.
-4. Follow Plan's **recommended next action** at the close of every cycle — it tells you exactly which agent to invoke next, or whether your input is needed before the team can proceed.
