@@ -1,17 +1,16 @@
 # Lean MoA Development Team
 
 ## Overview
-This repository implements a highly efficient, three-tier agentic development team designed to operate within VS Code GitHub Copilot. The system is built for functional software development — apps, games, and tools — with a hard focus on token efficiency and credit-gated execution. Agents are autonomous but coordinated: each one reads shared state before acting, decides whether it is genuinely needed, and bypasses if not.
+This repository implements a highly efficient, three-tier agentic development team designed to operate within VS Code GitHub Copilot. The system is built for functional software development — apps, games, and tools — with a hard focus on token efficiency and credit-gated execution. Plan orchestrates everything. Build and Test run as subagents within Plan's turn. The human only ever talks to Plan.
 
 ---
 
 ## Getting Started
 
 1. Clone the repo.
-2. Select **Plan** from the VS Code Chat agents dropdown.
-3. Describe your goal in plain language. Plan will scope the work and set the state.
-4. Use the **handoff buttons** at the end of Plan's response to transition to Build or Test.
-5. Follow Plan's **recommended next action** at the close of every cycle — it tells you exactly which agent to invoke next, or whether your input is needed before the team can proceed.
+2. Select **Planner** from the VS Code Chat agents dropdown.
+3. Describe your goal in plain language. Planner will scope the work, call Build and Test as subagents, and report back to you — all within a single turn.
+4. Continue talking to Planner. It drives the full cycle.
 
 ---
 
@@ -20,73 +19,81 @@ This repository implements a highly efficient, three-tier agentic development te
 ```
 Human Orchestrator  (absolute authority)
         │
-       Plan         (Project Manager, Document Controller, Cycle Reporter)
-        │
-       Build        (Developer, Execution Engine)
-        │
-       Test         (QA Lead, Adversarial Thinker)
+      Planner       (Project Manager, Document Controller, Cycle Reporter)
+      ┌─┴─┐
+    Build  Test     (called as subagents by Planner — not directly by the human)
 ```
 
-The Human Orchestrator drives direction. Plan conducts. Build and Test execute — or bypass.
+The Human Orchestrator talks only to Planner. Planner conducts the cycle, calling Build and Test in sequence as subagents using the `runSubagent` tool. Build and Test do not hand off to each other and do not speak to the Human Orchestrator.
 
 ---
 
 ## The Agents
 
-### Plan — Gemini 3 Flash (Preview)
-Plan is the conductor of the team. It is the only agent that touches the three managed files (`readme.md`, `changelog.md`, `handover.md`) and the only agent that speaks directly to the Human Orchestrator.
+### Planner — Gemini 3 Flash (Preview)
+Planner is the conductor and the only agent the human interacts with. It is the sole owner of the team's shared documentation files (`readme.md`, `changelog.md`, `handover.md`) and the only agent that writes the `# State:` line.
 
 **What it does each turn:**
-1. Reads `handover.md` to determine current state and any new Human direction.
-2. Updates the state and sprint goal in `handover.md`.
-3. Manages files: compresses `handover.md` when it approaches 80 lines, archiving completed cycle detail into `changelog.md` as a timestamped entry, then resetting `handover.md` to its clean 5-section structure.
-4. Compiles pull requests from Build's Change Manifest and Test's Risk Summary, presenting them to the Human Orchestrator for approval.
-5. Closes every turn with a **Cycle Summary** — what ran, what was bypassed, and a clear **recommended next action**.
+1. Checks `changelog.md` entry count — at 5 entries runs `/compact`; at 10+ recommends a new chat (state is safely preserved in `handover.md`).
+2. Reads `handover.md` to determine current state and any new Human direction.
+3. Updates state and sprint goal in `handover.md`.
+4. Calls **Build** as a subagent with the task. Writes Build's Change Manifest to `handover.md`.
+5. Calls **Test** as a subagent. Writes Test's Risk Summary to `handover.md`.
+6. If Test finds a blocker: re-engages Build up to **2 attempts** on Haiku. On third failure, escalates to **GPT-5.3-Codex**.
+7. Manages file compression: when `handover.md` approaches 80 lines, archives completed cycle detail into `changelog.md` and resets `handover.md`.
+8. Closes every turn with a **Cycle Summary** — what ran, what was skipped, current state, and whether Human input is needed.
 
-**Human override:** No syntax required. Plain language instructions like *"make Build run this cycle regardless"* are interpreted naturally and reflected in `handover.md`.
-
-**Handoffs:** Plan → Build, or Plan → Test (when Build is bypassed).
+**Human override:** Plain language instructions like *"skip Test this cycle"* or *"force Build even if nothing changed"* are interpreted naturally.
 
 ---
 
 ### Build — Claude Haiku 4.5
-Build is the implementation engine. It touches code and the filesystem, but never manages the team's shared documentation files — that belongs to Plan.
+Build is the implementation engine. It is called as a subagent by Planner. It touches code and the filesystem, but **never writes the `# State:` line** in `handover.md` — that belongs exclusively to Planner. Writing the wrong state is what causes the team to deadlock.
 
 **What it does each turn:**
-1. Reads `handover.md`. If the state is `PLANNING`, `PR_PENDING`, or `IDLE`, or there is no actionable build task, it **bypasses immediately** with a one-line notice and hands back to Plan.
-2. If proceeding: checks whether the task is isolated (single file, clear scope) or architectural (multi-file, structural). Isolated tasks proceed autonomously. Architectural tasks trigger a brief direction-check with Plan before code is written — a short sync costs fewer credits than rework.
-3. Implements to modern engineering standards: clean naming, appropriate error handling, no dead code or orphaned imports.
-4. Concludes every active turn by writing a **Change Manifest** to `handover.md`:
+1. Reads `handover.md` and the task passed by Plan.
+2. Implements to modern engineering standards: clean naming, appropriate error handling, no dead code.
+3. Returns a **Change Manifest** to Plan (and writes it to `# Last Change Manifest` in `handover.md`):
    - Files modified
    - Nature of changes
    - Known risks or limitations
 
-**Handoffs:** Build → Test (after completing work), or Build → Plan (if bypassing).
-
 ---
 
 ### Test — Claude Haiku 4.5
-Test is the last line of defence before code is considered done. It is adversarial by design.
+Test is the last line of defence before code is considered done. It is called as a subagent by Planner after Build completes. It is adversarial by design.
 
 **What it does each turn:**
-1. Reads `handover.md`. If the state is `PLANNING` or `IDLE`, or no Change Manifest from Build exists in the current cycle, it **bypasses immediately** with a one-line notice and returns to Plan.
-2. If proceeding, it tests in strict order:
-   - **Happy Path first** — does the system do what it is supposed to under normal conditions? Automate where possible.
-   - **Adversarial second** — what could fail? What edge cases exist? What would a hostile or careless user do?
-   - **UI-specific (if applicable)** — unpredictable inputs, navigation misuse, accessibility edge cases.
-3. **Critical defect escalation:** If a blocker is found, Test writes it directly to `# Open Blockers` in `handover.md` and uses the **"Re-engage Build"** handoff immediately — it does not wait for a full cycle restart.
-4. Concludes every active turn by writing a **Risk Summary** to `handover.md`:
+1. Reads `handover.md`. If there is no new Change Manifest from Build, it bypasses immediately.
+2. If proceeding, tests in strict order:
+   - **Happy Path first** — does the system work under normal conditions?
+   - **Adversarial second** — what edge cases and failure modes exist?
+   - **UI-specific (if applicable)** — invalid inputs, navigation misuse, accessibility.
+3. **Critical defect reporting:** Writes blockers to `# Open Blockers` in `handover.md` with full reproduction detail. Sets `Build re-engagement needed: Yes` in its Risk Summary. **Returns to Planner — does not re-engage Build directly.** Planner controls escalation.
+4. Returns a **Risk Summary** to Plan (and writes it to `# Last Risk Summary` in `handover.md`):
    - Pass / Pass with caveats / Fail
    - Key risks identified
    - Whether Build re-engagement is needed
 
-**Handoffs:** Test → Plan (normal completion), or Test → Build (critical blocker found).
+---
+
+## Bug Fix Escalation
+
+When Test reports a critical blocker, Plan tracks fix attempts in `# Open Blockers`:
+
+| Attempt | Agent | Notes |
+|---------|-------|-------|
+| 1 | Build (Haiku 4.5) | Standard fix attempt |
+| 2 | Build (Haiku 4.5) | Second attempt with added context from attempt 1 |
+| 3+ | Build (**GPT-5.3-Codex**) | Escalated — full blocker history passed |
+
+After each attempt, Test is re-run as a subagent to validate the fix.
 
 ---
 
 ## Team States
 
-The team always operates in one of five states, maintained by Plan in `handover.md`:
+The team always operates in one of five states, maintained by Planner in `handover.md`. **Only Planner writes this value.**
 
 | State        | Meaning                                              |
 |--------------|------------------------------------------------------|
@@ -96,7 +103,19 @@ The team always operates in one of five states, maintained by Plan in `handover.
 | `PR_PENDING` | PR compiled; awaiting Human Orchestrator approval    |
 | `IDLE`       | No active work; awaiting direction                   |
 
-Build and Test use this state as their primary bypass signal. When `PR_PENDING`, all agents stand down until the Human Orchestrator acts.
+---
+
+## Context Management
+
+`/compact` reduces context within the current chat session (good for ongoing work). A **new chat** is the true clean slate — safe to do because Planner reads `handover.md` on startup and resumes from full preserved state.
+
+| Signal | Action |
+|--------|--------|
+| 5 `changelog.md` entries | Planner runs `/compact` automatically |
+| 10+ entries, or chat feels slow | Start a new chat; select **Planner**; describe next task |
+
+Planner checks and acts on this at the start of every turn — you don't need to manage it.
+
 
 ---
 
